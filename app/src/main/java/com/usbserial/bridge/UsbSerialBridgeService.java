@@ -206,13 +206,31 @@ public class UsbSerialBridgeService extends Service {
             return;
         }
 
-        // Register receivers for permission and hotplug events
-        registerReceiver(usbPermissionReceiver, new IntentFilter(ACTION_USB_PERMISSION));
+        // Register receivers with the required export flags on Android 13+.
+        IntentFilter permissionFilter = new IntentFilter(ACTION_USB_PERMISSION);
 
         IntentFilter hotplugFilter = new IntentFilter();
         hotplugFilter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
         hotplugFilter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
-        registerReceiver(usbHotplugReceiver, hotplugFilter);
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            // This is an app-private permission result broadcast.
+            registerReceiver(
+                    usbPermissionReceiver,
+                    permissionFilter,
+                    Context.RECEIVER_NOT_EXPORTED
+            );
+
+            // USB attach/detach broadcasts originate from the Android system.
+            registerReceiver(
+                    usbHotplugReceiver,
+                    hotplugFilter,
+                    Context.RECEIVER_EXPORTED
+            );
+        } else {
+            registerReceiver(usbPermissionReceiver, permissionFilter);
+            registerReceiver(usbHotplugReceiver, hotplugFilter);
+        }
 
         // Probe for existing USB serial devices
         List<UsbSerialDriver> availableDrivers =
@@ -265,8 +283,11 @@ public class UsbSerialBridgeService extends Service {
 
     private void requestPermission(UsbDevice device) {
         Log.i(TAG, "Requesting USB permission for " + device.getDeviceName());
+        Intent permissionIntent = new Intent(ACTION_USB_PERMISSION);
+        // Scope the mutable PendingIntent to this app (required on Android 14+).
+        permissionIntent.setPackage(getPackageName());
         PendingIntent pi = PendingIntent.getBroadcast(
-                this, 0, new Intent(ACTION_USB_PERMISSION),
+                this, 0, permissionIntent,
                 Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
         usbManager.requestPermission(device, pi);
         broadcastStatus("requesting_permission", "Requesting USB access...");
